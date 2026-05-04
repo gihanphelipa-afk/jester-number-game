@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Multiplayer Jester Game</title>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-database-compat.js"></script>
+
+<style>
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: radial-gradient(circle at top, #1b1f3a, #0b0d17);
+  color: white;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+.card {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  padding: 25px;
+  border-radius: 15px;
+  width: 380px;
+  text-align: center;
+}
+
+button {
+  padding: 10px;
+  margin: 5px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  background: #00ffd5;
+  font-weight: bold;
+}
+
+input {
+  padding: 10px;
+  width: 80%;
+  margin: 5px;
+  border-radius: 8px;
+  border: none;
+  text-align: center;
+}
+
+.hidden { display: none; }
+
+/* 🌪 glitch */
+@keyframes shake {
+  0% { transform: translate(0,0); }
+  25% { transform: translate(2px,-2px); }
+  50% { transform: translate(-2px,2px); }
+  75% { transform: translate(2px,2px); }
+  100% { transform: translate(0,0); }
+}
+
+.glitch {
+  animation: shake 0.12s infinite;
+  filter: contrast(1.5) hue-rotate(25deg);
+}
+</style>
+</head>
+
+<body>
+
+<!-- LOGIN -->
+<div id="login" class="card">
+  <h1>🎭 Jester Multiplayer</h1>
+  <input id="nameInput" placeholder="Enter name">
+  <button onclick="loadProfile()">Start</button>
+</div>
+
+<!-- MENU -->
+<div id="menu" class="card hidden">
+  <h2>Welcome, <span id="playerName"></span></h2>
+
+  <button onclick="startGame('easy')">Easy</button>
+  <button onclick="startGame('medium')">Medium</button>
+  <button onclick="startGame('hard')">Hard</button>
+
+  <p id="menuMessage"></p>
+</div>
+
+<!-- GAME -->
+<div id="game" class="card hidden">
+
+  <h2>Guess the Number</h2>
+
+  <p>⏱ <span id="timer"></span></p>
+  <p>🎯 Attempts: <span id="attemptsLeft"></span></p>
+
+  <input id="guessInput" type="number">
+  <button onclick="checkGuess()">Guess</button>
+
+  <p id="feedback"></p>
+  <p id="gameMessage"></p>
+
+</div>
+
+<script>
+
+/* =======================
+   FIREBASE SETUP
+======================= */
+const firebaseConfig = {
+  apiKey: "YOUR_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com/",
+  projectId: "YOUR_PROJECT"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const globalRef = db.ref("jester");
+
+/* =======================
+   SETTINGS
+======================= */
+const RESERVED_NAME = "Jester";
+const ADMIN_PASSWORD = "1234";
+
+/* =======================
+   STATE
+======================= */
+let profile = {};
+let randomNumber;
+let attempts = 0;
+let maxAttempts;
+let timeLeft;
+let timer;
+let maxNumber;
+let gameEnded = false;
+
+/* =======================
+   GLOBAL AI (MULTIPLAYER)
+======================= */
+let jesterAI = {
+  personality: 0,
+  wins: 0,
+  losses: 0,
+  phase: 0
+};
+
+let glitchMode = false;
+
+/* listen to global updates */
+globalRef.on("value", (snap) => {
+  const data = snap.val();
+  if (!data) return;
+
+  jesterAI = data;
+  updateGlitch();
+});
+
+/* =======================
+   LOGIN
+======================= */
+function loadProfile() {
+
+  const name = document.getElementById("nameInput").value.trim();
+  if (!name) return;
+
+  const lower = name.toLowerCase();
+
+  // 🚫 reserved name
+  if (lower === RESERVED_NAME.toLowerCase()) {
+
+    const pass = prompt("Admin password:");
+    if (!pass || pass !== ADMIN_PASSWORD) return;
+
+    profile = { name: "Jester (Admin)", wins: 0, games: 0, admin: true };
+    localStorage.setItem("Jester", JSON.stringify(profile));
+  }
+
+  // 🚫 duplicate
+  if (lower !== RESERVED_NAME.toLowerCase() && localStorage.getItem(name)) {
+    document.getElementById("menuMessage").textContent = "Name taken.";
+    return;
+  }
+
+  if (!profile.name) {
+    profile = { name, wins: 0, games: 0 };
+    localStorage.setItem(name, JSON.stringify(profile));
+  }
+
+  document.getElementById("login").classList.add("hidden");
+  document.getElementById("menu").classList.remove("hidden");
+
+  document.getElementById("playerName").textContent = profile.name;
+}
+
+/* =======================
+   GAME START
+======================= */
+function startGame(diff) {
+
+  clearInterval(timer);
+  gameEnded = false;
+  attempts = 0;
+
+  if (diff === "easy") {
+    maxNumber = 100;
+    timeLeft = 60;
+    maxAttempts = 15;
+  }
+  if (diff === "medium") {
+    maxNumber = 500;
+    timeLeft = 120;
+    maxAttempts = 12;
+  }
+  if (diff === "hard") {
+    maxNumber = 1000;
+    timeLeft = 180;
+    maxAttempts = 10;
+  }
+
+  randomNumber = Math.floor(Math.random() * maxNumber) + 1;
+
+  document.getElementById("menu").classList.add("hidden");
+  document.getElementById("game").classList.remove("hidden");
+
+  document.getElementById("timer").textContent = timeLeft;
+
+  timer = setInterval(() => {
+    if (--timeLeft <= 0) endGame(false);
+    document.getElementById("timer").textContent = timeLeft;
+  }, 1000);
+}
+
+/* =======================
+   GUESS
+======================= */
+function checkGuess() {
+
+  if (gameEnded) return;
+
+  const guess = Number(document.getElementById("guessInput").value);
+  if (isNaN(guess)) return;
+
+  attempts++;
+
+  document.getElementById("attemptsLeft").textContent = attempts;
+
+  if (guess === randomNumber) {
+    updateAI(true);
+    endGame(true);
+    return;
+  }
+
+  if (attempts >= maxAttempts) {
+    updateAI(false);
+    endGame(false);
+    return;
+  }
+
+  updateAI(false);
+}
+
+/* =======================
+   END GAME
+======================= */
+function endGame(win) {
+
+  gameEnded = true;
+  clearInterval(timer);
+
+  if (win) profile.wins++;
+
+  if (!profile.games) profile.games = 0;
+  profile.games++;
+
+  updateAI(win);
+
+  alert(win ? "You win!" : "You lose!");
+
+  document.getElementById("game").classList.add("hidden");
+  document.getElementById("menu").classList.remove("hidden");
+}
+
+/* =======================
+   GLOBAL AI UPDATE
+======================= */
+function updateAI(win) {
+
+  if (win) {
+    jesterAI.wins++;
+    jesterAI.personality += 5;
+  } else {
+    jesterAI.losses++;
+    jesterAI.personality -= 7;
+  }
+
+  jesterAI.personality = Math.max(-100, Math.min(100, jesterAI.personality));
+
+  if (jesterAI.losses >= 2) jesterAI.phase = 1;
+  if (jesterAI.losses >= 5) jesterAI.phase = 2;
+
+  globalRef.set(jesterAI);
+
+  updateGlitch();
+}
+
+/* =======================
+   GLITCH
+======================= */
+function updateGlitch() {
+  glitchMode = jesterAI.phase >= 1;
+
+  if (glitchMode) document.body.classList.add("glitch");
+  else document.body.classList.remove("glitch");
+}
+
+</script>
+
+</body>
+</html>
